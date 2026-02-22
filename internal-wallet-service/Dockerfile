@@ -33,12 +33,15 @@ COPY --from=builder /app/dist ./dist
 # Create logs directory
 RUN mkdir -p logs
 
-# Keep as root for now to avoid permission issues
+# Security: Run as non-root user - BUT NOT YET
+# RUN addgroup -g 1001 -S nodejs
+# RUN adduser -S nodejs -u 1001
+
+# Generate prisma as root (needs write access to node_modules)
+# Then migrate and start
+CMD sh -c "npx prisma generate && npx prisma migrate deploy && node dist/app.js"
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))"
-
-# Use ENTRYPOINT script to ensure sequential execution
-ENTRYPOINT ["sh", "-c", "echo 'DATABASE_URL is: ' ${DATABASE_URL:+SET} && npx prisma generate && echo 'Prisma generated, running migrations...' && npx prisma migrate deploy && echo 'Migrations done, starting server...' && exec node dist/app.js"]
