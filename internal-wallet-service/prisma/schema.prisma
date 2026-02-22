@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AssetType {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  
+  wallets     Wallet[]
+  ledgerEntries LedgerEntry[]
+  
+  @@map("asset_types")
+}
+
+model Wallet {
+  id           String   @id @default(uuid())
+  ownerId      String   
+  ownerType    OwnerType
+  assetTypeId  String
+  balance      Decimal  @db.Decimal(19, 8) @default(0)
+  version      Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  assetType    AssetType @relation(fields: [assetTypeId], references: [id])
+  ledgerEntries LedgerEntry[]
+  
+  @@unique([ownerId, ownerType, assetTypeId])
+  @@index([ownerId, ownerType])
+  @@map("wallets")
+}
+
+model LedgerEntry {
+  id              String   @id @default(uuid())
+  transactionId   String
+  walletId        String
+  assetTypeId     String
+  entryType       EntryType
+  amount          Decimal  @db.Decimal(19, 8)
+  runningBalance  Decimal  @db.Decimal(19, 8)
+  description     String?
+  counterpartyWalletId String?
+  createdAt       DateTime @default(now())
+  
+  wallet          Wallet   @relation(fields: [walletId], references: [id])
+  assetType       AssetType @relation(fields: [assetTypeId], references: [id])
+  
+  @@index([transactionId])
+  @@index([walletId, createdAt])
+  @@map("ledger_entries")
+}
+
+model Transaction {
+  id              String   @id @default(uuid())
+  type            TransactionType
+  status          TransactionStatus @default(PENDING)
+  idempotencyKey  String   @unique
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+  
+  @@index([idempotencyKey])
+  @@index([status, createdAt])
+  @@map("transactions")
+}
+
+enum OwnerType {
+  USER
+  SYSTEM
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionType {
+  TOPUP
+  BONUS
+  PURCHASE
+  TRANSFER
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
