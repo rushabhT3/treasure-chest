@@ -17,7 +17,7 @@ RUN npm run build || (echo "=== BUILD FAILED - TypeScript errors ===" && cat tsc
 # Verify dist was actually created
 RUN ls -la dist/ && echo "=== dist/app.js exists ===" && ls dist/app.js
 
-# DON'T generate prisma here - no env vars yet
+RUN npx prisma generate
 
 # Production stage
 FROM node:22-alpine AS production
@@ -27,7 +27,8 @@ WORKDIR /app
 # Install production dependencies only
 COPY package*.json ./
 COPY prisma ./prisma/
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --only=production && npm cache clean --force
+RUN npx prisma generate
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
@@ -38,14 +39,6 @@ RUN mkdir -p logs
 # Security: Run as non-root user
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001
-
-# Switch to root temporarily for prisma generate
-USER root
-
-# Generate prisma client as root (needs write access)
-RUN npx prisma generate
-
-# Switch back to nodejs for runtime
 USER nodejs
 
 EXPOSE 3000
@@ -53,5 +46,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))"
 
-# Generate prisma, run migrations, then start
-CMD npx prisma migrate deploy && node dist/app.js
+CMD ["node", "dist/app.js"]
