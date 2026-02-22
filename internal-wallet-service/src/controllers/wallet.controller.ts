@@ -6,26 +6,27 @@ import { z } from 'zod';
 
 const walletService = new WalletService(prisma);
 
-// Validation schemas
+// FIX: userId is a plain string (e.g. "user-rich-001"), NOT a UUID.
+// Using z.string() here breaks all seeded user calls.
 const topUpSchema = z.object({
-  userId: z.string().uuid(),
-  assetTypeId: z.string().uuid(),
-  amount: z.string().regex(/^\d+(\.\d{1,8})?$/),
+  userId: z.string().min(1).max(255),
+  assetTypeId: z.string(),
+  amount: z.string().regex(/^\d+(\.\d{1,8})?$/, 'Amount must be a positive number'),
   metadata: z.record(z.any()).optional(),
 });
 
 const bonusSchema = z.object({
-  userId: z.string().uuid(),
-  assetTypeId: z.string().uuid(),
-  amount: z.string().regex(/^\d+(\.\d{1,8})?$/),
+  userId: z.string().min(1).max(255),
+  assetTypeId: z.string(),
+  amount: z.string().regex(/^\d+(\.\d{1,8})?$/, 'Amount must be a positive number'),
   reason: z.string().min(1).max(255),
   metadata: z.record(z.any()).optional(),
 });
 
 const spendSchema = z.object({
-  userId: z.string().uuid(),
-  assetTypeId: z.string().uuid(),
-  amount: z.string().regex(/^\d+(\.\d{1,8})?$/),
+  userId: z.string().min(1).max(255),
+  assetTypeId: z.string(),
+  amount: z.string().regex(/^\d+(\.\d{1,8})?$/, 'Amount must be a positive number'),
   serviceDescription: z.string().min(1).max(255),
   metadata: z.record(z.any()).optional(),
 });
@@ -45,18 +46,18 @@ export const walletController = {
   async topUp(req: Request, res: Response, next: NextFunction) {
     try {
       const idempotencyKey = getIdempotencyKey(req);
-        
+
       if (!idempotencyKey) {
-        res.status(400).json({ 
+        res.status(400).json({
           success: false,
           error: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Header Idempotency-Key is required' 
+          message: 'Header Idempotency-Key is required',
         });
-        return; // Return empty to stop execution without returning the Response object
+        return;
       }
 
       const validated = topUpSchema.parse(req.body);
-      
+
       const result = await walletService.topUp(
         validated.userId,
         validated.assetTypeId,
@@ -64,11 +65,11 @@ export const walletController = {
         idempotencyKey,
         validated.metadata
       );
-      
+
       res.status(201).json({
         success: true,
         data: result,
-        message: 'Top-up successful'
+        message: 'Top-up successful',
       });
     } catch (error) {
       next(error);
@@ -81,18 +82,18 @@ export const walletController = {
   async grantBonus(req: Request, res: Response, next: NextFunction) {
     try {
       const idempotencyKey = getIdempotencyKey(req);
-        
+
       if (!idempotencyKey) {
-        res.status(400).json({ 
+        res.status(400).json({
           success: false,
           error: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Header Idempotency-Key is required' 
+          message: 'Header Idempotency-Key is required',
         });
         return;
       }
 
       const validated = bonusSchema.parse(req.body);
-      
+
       const result = await walletService.grantBonus(
         validated.userId,
         validated.assetTypeId,
@@ -101,11 +102,11 @@ export const walletController = {
         validated.reason,
         validated.metadata
       );
-      
+
       res.status(201).json({
         success: true,
         data: result,
-        message: 'Bonus granted successfully'
+        message: 'Bonus granted successfully',
       });
     } catch (error) {
       next(error);
@@ -118,18 +119,18 @@ export const walletController = {
   async spend(req: Request, res: Response, next: NextFunction) {
     try {
       const idempotencyKey = getIdempotencyKey(req);
-        
+
       if (!idempotencyKey) {
-        res.status(400).json({ 
+        res.status(400).json({
           success: false,
           error: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Header Idempotency-Key is required' 
+          message: 'Header Idempotency-Key is required',
         });
         return;
       }
 
       const validated = spendSchema.parse(req.body);
-      
+
       const result = await walletService.spend(
         validated.userId,
         validated.assetTypeId,
@@ -138,11 +139,11 @@ export const walletController = {
         validated.serviceDescription,
         validated.metadata
       );
-      
+
       res.status(201).json({
         success: true,
         data: result,
-        message: 'Purchase successful'
+        message: 'Purchase successful',
       });
     } catch (error) {
       next(error);
@@ -156,12 +157,12 @@ export const walletController = {
     try {
       const { userId } = req.params as { userId: string };
       const assetTypeId = req.query.assetTypeId as string | undefined;
-      
+
       const balance = await walletService.getBalance(userId, assetTypeId);
-      
+
       res.json({
         success: true,
-        data: balance
+        data: balance,
       });
     } catch (error) {
       next(error);
@@ -176,12 +177,12 @@ export const walletController = {
       const { walletId } = req.params as { walletId: string };
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
       const offset = parseInt(req.query.offset as string) || 0;
-      
+
       const history = await walletService.getLedgerHistory(walletId, limit, offset);
-      
+
       res.json({
         success: true,
-        data: history
+        data: history,
       });
     } catch (error) {
       next(error);
@@ -195,10 +196,10 @@ export const walletController = {
     try {
       const { userId } = req.params as { userId: string };
       const stats = await walletService.getWalletStats(userId);
-      
+
       res.json({
         success: true,
-        data: stats
+        data: stats,
       });
     } catch (error) {
       next(error);

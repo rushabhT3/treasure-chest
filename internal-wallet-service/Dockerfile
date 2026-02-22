@@ -10,7 +10,13 @@ RUN npm ci
 
 # Copy source and build
 COPY . .
-RUN npm run build
+
+# Run build with verbose output so errors are visible
+RUN npm run build || (echo "=== BUILD FAILED - TypeScript errors ===" && cat tsconfig.json && exit 1)
+
+# Verify dist was actually created
+RUN ls -la dist/ && echo "=== dist/app.js exists ===" && ls dist/app.js
+
 RUN npx prisma generate
 
 # Production stage

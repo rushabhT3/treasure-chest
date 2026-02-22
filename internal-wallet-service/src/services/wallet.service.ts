@@ -20,7 +20,7 @@ export class WalletService {
 
   /**
    * 1. WALLET TOP-UP (Purchase):
-   * User buys credits with real money
+   * User buys credits with real money.
    * Flow: System Treasury -> User Wallet
    */
   async topUp(
@@ -32,38 +32,38 @@ export class WalletService {
   ): Promise<TransactionResult> {
     logger.info(`💰 Processing top-up for user ${userId}, amount: ${amount}`);
 
-    // Get system treasury wallet (source of funds)
     const treasuryWallet = await this.prisma.wallet.findFirst({
       where: { ownerType: 'SYSTEM', assetTypeId, ownerId: 'TREASURY' },
     });
-    
+
     if (!treasuryWallet) {
       throw new Error('TREASURY_WALLET_NOT_FOUND');
     }
 
-    // Get or create user wallet
     const userWallet = await this.getOrCreateWallet(userId, 'USER', assetTypeId);
 
     const operation: LedgerOperation = {
-      fromWalletId: treasuryWallet.id,  // Debit treasury (minting)
-      toWalletId: userWallet.id,        // Credit user
+      fromWalletId: treasuryWallet.id,
+      toWalletId: userWallet.id,
       assetTypeId,
       amount: new Prisma.Decimal(amount),
       description: `Top-up via ${metadata?.paymentProvider || 'Purchase'}`,
     };
 
     const result = await this.ledgerService.executeTransaction('TOPUP', operation, idempotencyKey);
-    
-    // Invalidate balance cache
     await this.invalidateBalanceCache(userId);
-    
     return result;
   }
 
   /**
    * 2. BONUS/INCENTIVE (Referral/Reward):
-   * System issues free credits
-   * Flow: System Revenue -> User Wallet
+   * System issues free credits to a user.
+   * Flow: System Treasury -> User Wallet
+   *
+   * FIX: Was incorrectly using REVENUE wallet (balance: 0) as source.
+   * Bonuses are a cost to the platform — they should be minted from Treasury,
+   * the same as top-ups, just without a payment. Revenue is a SINK (collects
+   * spent credits), not a source for new credits.
    */
   async grantBonus(
     userId: string,
@@ -75,23 +75,20 @@ export class WalletService {
   ): Promise<TransactionResult> {
     logger.info(`🎁 Processing bonus for user ${userId}, amount: ${amount}, reason: ${reason}`);
 
-    // Get system revenue wallet (source for bonuses)
-    const revenueWallet = await this.prisma.wallet.findFirst({
-      where: { 
-        ownerType: 'SYSTEM', 
-        assetTypeId,
-        ownerId: 'REVENUE'
-      },
+    // Bonuses come from Treasury (the mint), not Revenue.
+    // Revenue starts at 0 and only accumulates from user spending.
+    const treasuryWallet = await this.prisma.wallet.findFirst({
+      where: { ownerType: 'SYSTEM', assetTypeId, ownerId: 'TREASURY' },
     });
-    
-    if (!revenueWallet) {
-      throw new Error('REVENUE_WALLET_NOT_FOUND');
+
+    if (!treasuryWallet) {
+      throw new Error('TREASURY_WALLET_NOT_FOUND');
     }
 
     const userWallet = await this.getOrCreateWallet(userId, 'USER', assetTypeId);
 
     const operation: LedgerOperation = {
-      fromWalletId: revenueWallet.id,
+      fromWalletId: treasuryWallet.id,
       toWalletId: userWallet.id,
       assetTypeId,
       amount: new Prisma.Decimal(amount),
@@ -99,15 +96,13 @@ export class WalletService {
     };
 
     const result = await this.ledgerService.executeTransaction('BONUS', operation, idempotencyKey);
-    
     await this.invalidateBalanceCache(userId);
-    
     return result;
   }
 
   /**
    * 3. PURCHASE/SPEND:
-   * User spends credits on in-app service/item
+   * User spends credits on an in-app service/item.
    * Flow: User Wallet -> System Revenue
    */
   async spend(
@@ -120,7 +115,6 @@ export class WalletService {
   ): Promise<TransactionResult> {
     logger.info(`🛒 Processing spend for user ${userId}, amount: ${amount}, item: ${serviceDescription}`);
 
-    // Verify user has sufficient balance
     const userWallet = await this.prisma.wallet.findUnique({
       where: {
         ownerId_ownerType_assetTypeId: {
@@ -130,24 +124,20 @@ export class WalletService {
         },
       },
     });
-    
+
     if (!userWallet) {
       throw new Error('USER_WALLET_NOT_FOUND');
     }
-    
+
     if (userWallet.balance.lessThan(amount)) {
       throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // Get system revenue wallet (destination for spent credits)
+    // Revenue wallet collects spent credits (the sink)
     const revenueWallet = await this.prisma.wallet.findFirst({
-      where: { 
-        ownerType: 'SYSTEM', 
-        assetTypeId,
-        ownerId: 'REVENUE'
-      },
+      where: { ownerType: 'SYSTEM', assetTypeId, ownerId: 'REVENUE' },
     });
-    
+
     if (!revenueWallet) {
       throw new Error('REVENUE_WALLET_NOT_FOUND');
     }
@@ -161,9 +151,7 @@ export class WalletService {
     };
 
     const result = await this.ledgerService.executeTransaction('PURCHASE', operation, idempotencyKey);
-    
     await this.invalidateBalanceCache(userId);
-    
     return result;
   }
 
@@ -172,20 +160,18 @@ export class WalletService {
    */
   async getBalance(userId: string, assetTypeId?: string): Promise<BalanceInfo[]> {
     const cacheKey = `balance:${userId}:${assetTypeId || 'all'}`;
-    
-    // Try cache first
+
     const cached = await redis.get(cacheKey);
     if (cached) {
       logger.debug(`📦 Cache hit for balance: ${userId}`);
       return JSON.parse(cached);
     }
 
-    // Fetch from database
     const wallets = await this.prisma.wallet.findMany({
-      where: { 
-        ownerId: userId, 
+      where: {
+        ownerId: userId,
         ownerType: 'USER',
-        ...(assetTypeId && { assetTypeId })
+        ...(assetTypeId && { assetTypeId }),
       },
       include: { assetType: true },
     });
@@ -198,10 +184,9 @@ export class WalletService {
       updatedAt: w.updatedAt,
     }));
 
-    // Cache for 5 minutes (300 seconds)
     await redis.setex(cacheKey, 300, JSON.stringify(result));
     logger.debug(`💾 Cached balance for user: ${userId}`);
-    
+
     return result;
   }
 
@@ -215,11 +200,11 @@ export class WalletService {
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
-        include: { 
-          assetType: { select: { code: true, name: true } }
+        include: {
+          assetType: { select: { code: true, name: true } },
         },
       }),
-      this.prisma.ledgerEntry.count({ where: { walletId } })
+      this.prisma.ledgerEntry.count({ where: { walletId } }),
     ]);
 
     return {
@@ -230,33 +215,33 @@ export class WalletService {
       })),
       total,
       limit,
-      offset
+      offset,
     };
   }
 
   /**
-   * Get wallet statistics
+   * Get wallet statistics for a user
    */
   async getWalletStats(userId: string) {
     const stats = await this.prisma.ledgerEntry.groupBy({
       by: ['entryType'],
       where: {
-        wallet: { ownerId: userId, ownerType: 'USER' }
+        wallet: { ownerId: userId, ownerType: 'USER' },
       },
       _sum: { amount: true },
-      _count: { id: true }
+      _count: { id: true },
     });
 
     return {
       totalCredits: stats.find(s => s.entryType === 'CREDIT')?._sum.amount?.toString() || '0',
       totalDebits: stats.find(s => s.entryType === 'DEBIT')?._sum.amount?.toString() || '0',
-      transactionCount: stats.reduce((acc, s) => acc + s._count.id, 0)
+      transactionCount: stats.reduce((acc, s) => acc + s._count.id, 0),
     };
   }
 
   private async getOrCreateWallet(
-    ownerId: string, 
-    ownerType: 'USER' | 'SYSTEM', 
+    ownerId: string,
+    ownerType: 'USER' | 'SYSTEM',
     assetTypeId: string
   ) {
     const existing = await this.prisma.wallet.findUnique({
@@ -264,11 +249,11 @@ export class WalletService {
         ownerId_ownerType_assetTypeId: { ownerId, ownerType, assetTypeId },
       },
     });
-    
+
     if (existing) return existing;
 
     logger.info(`🆕 Creating new wallet for ${ownerType}:${ownerId}, asset: ${assetTypeId}`);
-    
+
     return this.prisma.wallet.create({
       data: {
         ownerId,
