@@ -1,266 +1,221 @@
 # Internal Wallet Service
 
-High-performance, ACID-compliant virtual currency wallet service with double-entry ledger architecture for gaming/loyalty platforms.
+ACID-compliant virtual currency wallet service with double-entry ledger architecture for gaming/loyalty platforms.
 
-## ✅ Requirements Checklist
+## Requirements Checklist
 
-### Core Requirements
 - [x] **Asset Types**: Gold Coins, Diamonds, Loyalty Points
 - [x] **System Accounts**: Treasury (mint) & Revenue (sink) wallets
-- [x] **User Accounts**: 2+ users with initial balances (user-rich-001, user-new-002)
-- [x] **API Endpoints**: RESTful endpoints for all operations
-- [x] **Wallet Top-up**: Purchase credits with idempotency
-- [x] **Bonus/Incentive**: Grant free credits (referral/rewards)
-- [x] **Purchase/Spend**: Spend credits on in-app items
-
-### Critical Constraints
-- [x] **Concurrency**: Distributed locking + optimistic locking
-- [x] **Race Conditions**: Ordered lock acquisition prevents deadlocks
+- [x] **User Accounts**: `user-rich-001` (10k gold, 500 diamonds), `user-new-002` (100 gold, 50 loyalty)
+- [x] **Wallet Top-up**, **Bonus/Incentive**, **Purchase/Spend** — all three flows implemented
+- [x] **Concurrency & Race Conditions**: Distributed locking + optimistic locking
 - [x] **Idempotency**: Redis-based deduplication (24h retention)
-
-### Brownie Points
 - [x] **Deadlock Avoidance**: Consistent UUID ordering + distributed locks
-- [x] **Ledger-Based Architecture**: Double-entry bookkeeping (immutable records)
-- [x] **Containerization**: Docker + Docker Compose with health checks
-- [ ] **Hosting**: (Optional - deploy to your preferred cloud)
-
-## 🚀 Quick Start
-
-### Option 1: Docker (Recommended)
-```bash
-# Start all services (DB, Redis, App, Migrations, Seed)
-docker-compose up --build
-
-# Service available at http://localhost:3000
-# Health check: http://localhost:3000/health
-```
-
-### Option 2: Local Development
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Start PostgreSQL & Redis locally
-# (Use Docker for DB/Redis if preferred)
-
-# 3. Setup environment
-cp .env.example .env
-# Edit .env with your database credentials
-
-# 4. Run migrations
-npx prisma migrate dev
-
-# 5. Seed database
-npm run db:seed
-
-# 6. Start development server
-npm run dev
-```
-
-## 📚 API Documentation
-
-### Authentication
-All endpoints require `Idempotency-Key` header for write operations.
-
-### Endpoints
-
-#### 1. Wallet Top-up (Purchase)
-```http
-POST /api/v1/wallet/topup
-Idempotency-Key: <unique-uuid>
-
-{
-  "userId": "user-rich-001",
-  "assetTypeId": "asset-gold-coin-001",
-  "amount": "100.00",
-  "metadata": {
-    "paymentProvider": "Stripe",
-    "paymentId": "pi_123456"
-  }
-}
-```
-
-#### 2. Grant Bonus (Referral/Reward)
-```http
-POST /api/v1/wallet/bonus
-Idempotency-Key: <unique-uuid>
-
-{
-  "userId": "user-new-002",
-  "assetTypeId": "asset-loyalty-001",
-  "amount": "50.00",
-  "reason": "Referral bonus",
-  "metadata": {
-    "campaign": "Spring2026",
-    "referredBy": "user-rich-001"
-  }
-}
-```
-
-#### 3. Spend Credits (Purchase)
-```http
-POST /api/v1/wallet/spend
-Idempotency-Key: <unique-uuid>
-
-{
-  "userId": "user-rich-001",
-  "assetTypeId": "asset-gold-coin-001",
-  "amount": "30.00",
-  "serviceDescription": "Legendary Sword",
-  "metadata": {
-    "itemId": "item-123",
-    "category": "weapons"
-  }
-}
-```
-
-#### 4. Check Balance
-```http
-GET /api/v1/wallet/:userId/balance?assetTypeId=asset-gold-coin-001
-```
-
-#### 5. Ledger History
-```http
-GET /api/v1/wallet/:walletId/ledger?limit=50&offset=0
-```
-
-## 🏗️ Technology Stack
-
-| Component | Technology | Version | Justification |
-|-----------|-----------|---------|---------------|
-| **Runtime** | Node.js | 22 LTS | Proven in fintech, event-loop for I/O-bound transactions |
-| **Language** | TypeScript | 5.7 | Type safety for financial calculations |
-| **Framework** | Express.js | 4.21 | Lightweight, battle-tested, extensive middleware |
-| **Database** | PostgreSQL | 17 | ACID compliance, row-level locking, JSON support |
-| **Cache** | Redis | 7 | Distributed locking, idempotency, balance caching |
-| **ORM** | Prisma | 6.3 | Type-safe queries, migration management |
-| **Validation** | Zod | 3.24 | Runtime type validation |
-| **Container** | Docker | 24+ | Consistent environments, easy deployment |
-
-## 🔒 Concurrency Strategy
-
-### 1. Deadlock Prevention
-```
-Problem: Concurrent transactions on same wallets can cause circular waits
-
-Solution: Consistent Resource Ordering
-- All wallet locks acquired in ascending UUID order
-- Distributed Redis locks with 30s TTL
-- Automatic retry with exponential backoff
-```
-
-### 2. Optimistic Locking
-```sql
--- Version column prevents lost updates
-UPDATE wallets 
-SET balance = balance - amount, version = version + 1
-WHERE id = ? AND version = ?  -- Fails if version changed
-```
-
-### 3. Database Isolation
-```typescript
-// Serializable isolation prevents phantom reads
-prisma.$transaction(async (tx) => {
-  // All operations...
-}, {
-  isolationLevel: Prisma.TransactionIsolationLevel.Serializable
-});
-```
-
-### 4. Idempotency
-- Redis stores transaction results for 24 hours
-- Duplicate requests return cached result instantly
-- Processing flags prevent concurrent execution
-
-## 📊 Database Schema
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   AssetType     │     │     Wallet      │     │  LedgerEntry    │
-├─────────────────┤     ├─────────────────┤     ├─────────────────┤
-│ id (PK)         │◄────┤ assetTypeId(FK) │     │ id (PK)         │
-│ code (unique)   │     │ id (PK)         │◄────┤ walletId (FK)   │
-│ name            │     │ ownerId         │     │ transactionId   │
-│ description     │     │ ownerType       │     │ entryType       │
-└─────────────────┘     │ balance         │     │ amount          │
-                        │ version         │     │ runningBalance  │
-                        └─────────────────┘     │ description     │
-                                │               │ createdAt       │
-                                │               └─────────────────┘
-                                │
-                        ┌───────┴───────┐
-                        │  Transaction  │
-                        ├───────────────┤
-                        │ id (PK)       │
-                        │ type          │
-                        │ status        │
-                        │ idempotencyKey│
-                        │ metadata      │
-                        └───────────────┘
-```
-
-## 🧪 Testing
-
-```bash
-# Run unit tests
-npm test
-
-# Load test with k6 (install k6 first)
-k6 run tests/load-test.js
-
-# Manual concurrency test
-for i in {1..10}; do
-  curl -X POST http://localhost:3000/api/v1/wallet/spend \
-    -H "Idempotency-Key: test-$i-$(date +%s)" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "userId": "user-rich-001",
-      "assetTypeId": "asset-gold-coin-001",
-      "amount": "10.00",
-      "serviceDescription": "Load Test Item"
-    }' &
-done
-```
-
-## 🌐 Deployment
-
-### Railway/Render
-1. Push to GitHub
-2. Connect to Railway/Render
-3. Add PostgreSQL and Redis plugins
-4. Set environment variables
-5. Deploy!
-
-### AWS ECS
-```bash
-# Build and push to ECR
-docker build -t wallet-service .
-docker tag wallet-service:latest <account>.dkr.ecr.<region>.amazonaws.com/wallet-service:latest
-docker push <account>.dkr.ecr.<region>.amazonaws.com/wallet-service:latest
-
-# Deploy with ECS CLI or Terraform
-```
-
-## 📈 Monitoring
-
-- **Logs**: Winston JSON logging to `logs/`
-- **Health**: `/health` endpoint for load balancers
-- **Metrics**: Prisma query metrics (enable in production)
-- **Tracing**: OpenTelemetry compatible structure
-
-## 🛡️ Security Features
-
-- Helmet.js security headers
-- CORS configuration
-- Rate limiting (100 req/15min general, 10 req/min transactions)
-- Input validation with Zod
-- SQL injection prevention (Prisma ORM)
-- No sensitive data in logs
-
-## 📝 License
-
-MIT License - Internal use for Dino Ventures assignment
+- [x] **Ledger-Based Architecture**: Double-entry bookkeeping
+- [x] **Containerization**: Docker + Docker Compose (one command spin-up)
 
 ---
 
-**Built with ❤️ using Node.js + TypeScript + PostgreSQL + Redis**
+## Quick Start
+
+```bash
+git clone https://github.com/your-username/treasure-chest.git
+cd treasure-chest/internal-wallet-service
+
+docker-compose up --build
+```
+
+This single command starts PostgreSQL + Redis, runs migrations, seeds data, and starts the app on **http://localhost:3000**.
+
+### Local Development
+
+```bash
+npm install
+cp .env.example .env          # configure DATABASE_URL and REDIS_HOST
+
+npx prisma migrate deploy
+npm run db:seed               # TypeScript seed
+# OR: psql $DATABASE_URL -f scripts/seed.sql
+
+npm run dev
+```
+
+---
+
+## Seed Data
+
+Both `scripts/seed.ts` and `scripts/seed.sql` are provided and idempotent (safe to re-run).
+
+| Type | ID | Details |
+|------|----|---------|
+| Asset | `asset-gold-coin-001` | Gold Coins |
+| Asset | `asset-diamond-001` | Diamonds |
+| Asset | `asset-loyalty-001` | Loyalty Points |
+| System | `TREASURY` | Mint — 10M gold, 5M diamonds, 5M loyalty |
+| System | `REVENUE` | Sink — starts at 0, collects spent credits |
+| User | `user-rich-001` | 10,000 gold, 500 diamonds |
+| User | `user-new-002` | 100 gold, 50 loyalty points |
+
+---
+
+## API Reference
+
+All write endpoints require an `Idempotency-Key` header.
+
+```
+POST /api/v1/wallet/topup
+POST /api/v1/wallet/bonus
+POST /api/v1/wallet/spend
+GET  /api/v1/wallet/:userId/balance?assetTypeId=asset-gold-coin-001
+GET  /api/v1/wallet/:walletId/ledger
+GET  /api/v1/wallet/:userId/stats
+GET  /health
+```
+
+**Top-up example:**
+```bash
+curl -X POST http://localhost:3000/api/v1/wallet/topup \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: topup-001" \
+  -d '{
+    "userId": "user-rich-001",
+    "assetTypeId": "asset-gold-coin-001",
+    "amount": "100.00",
+    "metadata": { "paymentProvider": "Stripe", "paymentId": "pi_123" }
+  }'
+```
+
+---
+
+## Technology Choices
+
+| Component | Technology | Why |
+|-----------|-----------|-----|
+| Runtime | Node.js 22 | Non-blocking I/O suits high-throughput transaction workloads |
+| Language | TypeScript 5.7 | Compile-time safety eliminates type errors in financial logic |
+| Framework | Express.js | Minimal and predictable — full control over the request pipeline |
+| Database | PostgreSQL 17 | ACID transactions, serializable isolation, `DECIMAL(19,8)` precision |
+| Cache/Lock | Redis 7 | Sub-millisecond distributed locking and idempotency key storage |
+| ORM | Prisma 6 | Type-safe queries + migration management |
+| Validation | Zod | Runtime schema validation mirroring TypeScript types |
+
+---
+
+## Concurrency Strategy
+
+Three layered defences handle concurrent requests:
+
+### 1. Distributed Locking (Redis)
+Before any wallet is modified, a Redis lock is acquired with a 30s TTL using `SET key token EX 30 NX`. Failed acquisitions retry with exponential backoff (100ms → 200ms → 400ms).
+
+### 2. Deadlock Prevention via Ordered Lock Acquisition
+When a transaction touches two wallets, both locks must be held simultaneously. Acquiring them in arbitrary order causes circular waits. **Solution:** wallet IDs are sorted lexicographically before locking — every thread acquires locks in the same order, making deadlocks structurally impossible.
+
+```typescript
+const sortedIds = [...walletIds].sort((a, b) => a.localeCompare(b));
+for (const id of sortedIds) await acquireLock(`wallet:${id}`);
+```
+
+### 3. Optimistic Locking (Version Column)
+Every wallet row has a `version` integer. Balance updates use `WHERE id = ? AND version = ?`. If another transaction already incremented the version, the update returns `count: 0` and throws `CONCURRENT_MODIFICATION`.
+
+```sql
+UPDATE wallets
+SET balance = balance - $amount, version = version + 1
+WHERE id = $id AND version = $expected_version
+```
+
+### 4. Serializable Isolation
+All transactions run at `Serializable` isolation — the strongest PostgreSQL offers — preventing phantom reads and write skew.
+
+### 5. Idempotency
+Every write endpoint requires an `Idempotency-Key`. Results are cached in Redis for 24 hours. Duplicate requests return the cached result without re-executing. A `processing` flag prevents two concurrent identical requests from both executing.
+
+---
+
+## Double-Entry Ledger
+
+Every transaction creates two immutable ledger entries — one debit, one credit.
+
+```
+Top-up 100 Gold for user-rich-001:
+
+  wallet-treasury  │ DEBIT  │ 100.00 │ running: 9,999,900
+  wallet-user1     │ CREDIT │ 100.00 │ running: 10,100
+```
+
+The `balance` column is a denormalised read cache; the ledger is the source of truth.
+
+---
+
+## Environment Variables
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/wallet_db
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+PORT=3000
+NODE_ENV=development
+LOG_LEVEL=info
+```
+
+## seed.sql
+
+```sql
+-- =============================================================
+-- Internal Wallet Service — Seed Data
+-- Run after migrations: psql $DATABASE_URL -f scripts/seed.sql
+-- =============================================================
+
+-- Disable triggers temporarily for clean upserts
+BEGIN;
+
+-- ============================================================
+-- 1. ASSET TYPES
+-- ============================================================
+INSERT INTO asset_types (id, code, name, description, "isActive", "createdAt")
+VALUES
+  ('asset-gold-coin-001',  'GOLD_COIN',     'Gold Coins',     'Premium in-game currency for purchases',       true, NOW()),
+  ('asset-diamond-001',    'DIAMOND',       'Diamonds',       'Ultra-premium currency for exclusive items',   true, NOW()),
+  ('asset-loyalty-001',    'LOYALTY_POINT', 'Loyalty Points', 'Reward points for engagement and referrals',   true, NOW())
+ON CONFLICT (code) DO NOTHING;
+
+-- ============================================================
+-- 2. SYSTEM WALLETS
+-- Treasury  = source of all newly minted credits (top-ups & bonuses)
+-- Revenue   = sink that collects credits when users spend them
+-- ============================================================
+INSERT INTO wallets (id, "ownerId", "ownerType", "assetTypeId", balance, version, "createdAt", "updatedAt")
+VALUES
+  -- Treasury
+  ('wallet-treasury-gold',    'TREASURY', 'SYSTEM', 'asset-gold-coin-001', 10000000.00, 0, NOW(), NOW()),
+  ('wallet-treasury-diamond', 'TREASURY', 'SYSTEM', 'asset-diamond-001',    5000000.00, 0, NOW(), NOW()),
+  ('wallet-treasury-loyalty', 'TREASURY', 'SYSTEM', 'asset-loyalty-001',    5000000.00, 0, NOW(), NOW()),
+  -- Revenue (sink — starts at zero)
+  ('wallet-revenue-gold',    'REVENUE',  'SYSTEM', 'asset-gold-coin-001',        0.00, 0, NOW(), NOW()),
+  ('wallet-revenue-diamond', 'REVENUE',  'SYSTEM', 'asset-diamond-001',           0.00, 0, NOW(), NOW()),
+  ('wallet-revenue-loyalty', 'REVENUE',  'SYSTEM', 'asset-loyalty-001',           0.00, 0, NOW(), NOW())
+ON CONFLICT ("ownerId", "ownerType", "assetTypeId") DO NOTHING;
+
+-- ============================================================
+-- 3. USER WALLETS (at least 2 users with initial balances)
+-- ============================================================
+INSERT INTO wallets (id, "ownerId", "ownerType", "assetTypeId", balance, version, "createdAt", "updatedAt")
+VALUES
+  -- user-rich-001: veteran player, plenty of both currencies
+  ('wallet-user1-gold',    'user-rich-001', 'USER', 'asset-gold-coin-001', 10000.00, 0, NOW(), NOW()),
+  ('wallet-user1-diamond', 'user-rich-001', 'USER', 'asset-diamond-001',     500.00, 0, NOW(), NOW()),
+  -- user-new-002: newcomer, small starting balance + some loyalty points
+  ('wallet-user2-gold',    'user-new-002',  'USER', 'asset-gold-coin-001',   100.00, 0, NOW(), NOW()),
+  ('wallet-user2-loyalty', 'user-new-002',  'USER', 'asset-loyalty-001',      50.00, 0, NOW(), NOW())
+ON CONFLICT ("ownerId", "ownerType", "assetTypeId") DO NOTHING;
+
+COMMIT;
+
+-- ============================================================
+-- Verification queries (optional — comment out if running via script)
+-- ============================================================
+-- SELECT code, name FROM asset_types ORDER BY code;
+-- SELECT "ownerId", "ownerType", "assetTypeId", balance FROM wallets ORDER BY "ownerType", "ownerId";
+```
