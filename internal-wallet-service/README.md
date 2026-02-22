@@ -19,7 +19,7 @@ ACID-compliant virtual currency wallet service with double-entry ledger architec
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-username/treasure-chest.git
+git clone https://github.com/rushabhT3/treasure-chest.git
 cd treasure-chest/internal-wallet-service
 
 docker-compose up --build
